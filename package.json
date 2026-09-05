@@ -1,0 +1,45 @@
+{
+  "name": "@gasolinaradar/ocm-collector",
+  "version": "1.0.0",
+  "description": "Collector for OpenChargeMap (OCM) electric vehicle charging stations (Spain) returning normalized EV stations",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gasolinaradar/ocm-collector.git"
+  },
+  "homepage": "https://github.com/gasolinaradar/ocm-collector#readme",
+  "bugs": {
+    "url": "https://github.com/gasolinaradar/ocm-collector/issues"
+  },
+  "scripts": {
+    "test": "node --test test/collector.test.js"
+  },
+  "keywords": [
+    "ocm",
+    "openchargemap",
+    "ev",
+    "charging",
+    "stations",
+    "electrolineras",
+    "spain",
+    "collector"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "axios": "^1.13.2"
+  }
+}
