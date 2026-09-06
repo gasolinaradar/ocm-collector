@@ -101,6 +101,7 @@ async function fetchStations(options = {}, hooks = {}) {
   const maxresults = options.maxresults ?? DEFAULT_MAXRESULTS;
   const all = [];
   let lastId = 0;
+  let pageCount = 0;
 
   const fetchWithRetry = () =>
     retry(
@@ -122,9 +123,15 @@ async function fetchStations(options = {}, hooks = {}) {
     const series = await fetchWithRetry();
     const before = all.length;
     all.push(...series);
-    reportProgress(50, {
+    pageCount += 1;
+    // El % del fetch va de 5 a 60; los últimos 40 puntos se reservan para la
+    // persistencia/upsert que el API ejecuta después del fetch. Sin un total
+    // conocido (OCM no lo devuelve con greaterthanid), se avanza por página con
+    // un tope en 60 para no pintar "100%" mientras aún falta persistir.
+    reportProgress(Math.min(5 + pageCount * 5, 60), {
       stage: 'fetching_dataset',
       fetched: all.length,
+      pageCount,
       pageSize: series.length,
       lastId,
     });
@@ -148,7 +155,8 @@ async function fetchStations(options = {}, hooks = {}) {
   reportProgress(60, { stage: 'normalizing_dataset', stationCount: all.length });
   const { normalizePoi } = require('./normalize');
   const normalized = all.map(normalizePoi);
-  reportProgress(100, { stage: 'completed', stationCount: normalized.length });
+  // El fetch termina al 60%; el API sube hasta 100 a medida que persiste.
+  reportProgress(60, { stage: 'fetch_completed', stationCount: normalized.length });
   return normalized;
 }
 
