@@ -17,7 +17,7 @@ function makePoi(overrides = {}) {
     },
     StatusTypeID: 50,
     OperatorInfo: { ID: 3341, Title: 'Opcharge', WebsiteURL: 'https://opcharge.example' },
-    ConnectionTypes: [
+    Connections: [
       {
         ConnectionTypeID: 28,
         FormalName: 'Type 2',
@@ -66,7 +66,7 @@ test('normalizePoi maps a standard OCM POI to the Station contract', () => {
 
 test('normalizePoi handles multi-connector POIs by mapping each connection type', () => {
   const poi = makePoi({
-    ConnectionTypes: [
+    Connections: [
       { ConnectionTypeID: 30, PowerKW: 50, Voltage: 400, Amps: 125 },
       { ConnectionTypeID: 32, PowerKW: 20, Voltage: 400, Amps: 50 },
     ],
@@ -100,7 +100,7 @@ test('normalizePoi maps status types', () => {
 test('normalizeConnectors keeps connectors that only have a ConnectionTypeID', () => {
   const station = normalizePoi(
     makePoi({
-      ConnectionTypes: [
+      Connections: [
         { ConnectionTypeID: 28 },
         { ConnectionTypeID: 27 },
         { ConnectionTypeID: 999999 },
@@ -126,7 +126,7 @@ test('normalizeConnectors keeps connectors that only have a ConnectionTypeID', (
 test('normalizeConnectors drops connector entries without a ConnectionTypeID', () => {
   const station = normalizePoi(
     makePoi({
-      ConnectionTypes: [{}, { ConnectionTypeID: 28, PowerKW: 22 }],
+      Connections: [{}, { ConnectionTypeID: 28, PowerKW: 22 }],
     }),
   );
 
