@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { createOcmCollector, fetchStations } = require('../src');
-const { normalizePoi, OCM_TO_OCPI_CONNECTOR } = require('../src/normalize');
+const { normalizePoi, parseUsageCost, OCM_TO_OCPI_CONNECTOR } = require('../src/normalize');
 
 function makePoi(overrides = {}) {
   return {
@@ -210,4 +210,48 @@ test('fetchStations throws on unexpected payload', async () => {
     () => fetchStations({ httpClient: { get: async () => ({ data: { foo: 1 } }) }, logger: null }),
     /Unexpected OCM response payload/,
   );
+});
+
+test('parseUsageCost parses per-kWh prices to ENERGY components', () => {
+  assert.deepStrictEqual(parseUsageCost('0,45\u20AC/kWh'), [
+    { type: 'ENERGY', price: 0.45, currency: 'EUR' },
+  ]);
+  assert.deepStrictEqual(parseUsageCost('0.35 EUR per kWh'), [
+    { type: 'ENERGY', price: 0.35, currency: 'EUR' },
+  ]);
+  assert.deepStrictEqual(parseUsageCost('0,25\u20AC/kWh '), [
+    { type: 'ENERGY', price: 0.25, currency: 'EUR' },
+  ]);
+});
+
+test('parseUsageCost parses session and per-time costs', () => {
+  assert.deepStrictEqual(parseUsageCost('5\u20AC/up to 60min'), [
+    { type: 'FLAT', price: 5, currency: 'EUR' },
+  ]);
+  assert.deepStrictEqual(parseUsageCost('2\u20AC/session'), [
+    { type: 'FLAT', price: 2, currency: 'EUR' },
+  ]);
+});
+
+test('parseUsageCost returns empty for free, unknown or no-parseable text', () => {
+  assert.deepStrictEqual(parseUsageCost('Gratis'), []);
+  assert.deepStrictEqual(parseUsageCost('Free'), []);
+  assert.deepStrictEqual(parseUsageCost('Variado'), []);
+  assert.deepStrictEqual(parseUsageCost(''), []);
+  assert.deepStrictEqual(parseUsageCost('Please contact station owner'), []);
+});
+
+test('normalizePoi enriches prices, availability and site type from OCM fields', () => {
+  const station = normalizePoi(
+    makePoi({
+      UsageCost: '0,45\u20AC/kWh',
+      UsageTypeID: 4,
+      NumberOfPoints: 4,
+      StatusTypeID: 50,
+    }),
+  );
+
+  assert.deepStrictEqual(station.prices, [{ type: 'ENERGY', price: 0.45, currency: 'EUR' }]);
+  assert.deepStrictEqual(station.availability, { status: 'AVAILABLE', evseCount: 4 });
+  assert.equal(station.typeOfSite, 'public');
 });
