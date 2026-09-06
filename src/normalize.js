@@ -52,6 +52,7 @@ function normalizeStatus(statusTypeId) {
 function normalizePoi(poi) {
   const addressInfo = poi.AddressInfo || {};
   const operatorInfo = poi.OperatorInfo || {};
+  const connections = poi.Connections || poi.ConnectionTypes || [];
 
   const lat = Number(addressInfo.Latitude);
   const lon = Number(addressInfo.Longitude);
@@ -69,8 +70,8 @@ function normalizePoi(poi) {
       Number.isFinite(lat) && Number.isFinite(lon)
         ? { type: 'Point', coordinates: [lon, lat] }
         : undefined,
-    connectorTypeKeys: (poi.ConnectionTypes || []).map((conn) => String(conn.ConnectionTypeID)),
-    connectors: normalizeConnectors(poi.ConnectionTypes),
+    connectorTypeKeys: connections.map((conn) => String(conn.ConnectionTypeID)),
+    connectors: normalizeConnectors(connections),
     operator: operatorInfo.Title
       ? {
           name: operatorInfo.Title,
