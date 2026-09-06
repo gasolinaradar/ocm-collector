@@ -142,8 +142,11 @@ test('OCM_TO_OCPI_CONNECTOR maps known connector IDs', () => {
 function createFakeClient(results) {
   return {
     get: async (_url, { params = {} } = {}) => {
-      const offset = params.offset || 0;
-      return { status: 200, data: results.slice(offset, offset + 2000) };
+      const greaterThan = params.greaterthanid || -1;
+      return {
+        status: 200,
+        data: results.slice(greaterThan + 1).slice(0, 2000),
+      };
     },
   };
 }
@@ -164,10 +167,10 @@ test('fetchStations returns normalized stations', async () => {
 function createPaginatedClient(count) {
   return {
     get: async (_url, { params = {} } = {}) => {
-      const offset = params.offset || 0;
+      const greaterThan = params.greaterthanid || -1;
       const max = params.maxresults || 2000;
       const page = [];
-      for (let i = offset; i < Math.min(count, offset + max); i += 1) {
+      for (let i = greaterThan + 1; i < Math.min(count, greaterThan + 1 + max); i += 1) {
         page.push(makePoi({ ID: i }));
       }
       return { status: 200, data: page };
