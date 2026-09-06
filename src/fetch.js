@@ -40,16 +40,17 @@ function retry(fn, options = {}) {
   })();
 }
 
-function buildParams({ apiKey, maxresults, offset }) {
+function buildParams({ apiKey, maxresults, greaterthanid }) {
   const params = {
     countrycode: 'ES',
     maxresults,
     compact: true,
     verbose: false,
     opendata: true,
+    sortby: 'id_asc',
   };
-  if (offset > 0) {
-    params.offset = offset;
+  if (greaterthanid > 0) {
+    params.greaterthanid = greaterthanid;
   }
   if (apiKey) {
     params.key = apiKey;
@@ -71,10 +72,10 @@ function normalizePagination(result) {
   throw new Error('Unexpected OCM response payload');
 }
 
-async function fetchPage(httpClient, { url, timeout, apiKey, maxresults, offset }) {
+async function fetchPage(httpClient, { url, timeout, apiKey, maxresults, greaterthanid }) {
   return httpClient.get(url, {
     timeout,
-    params: buildParams({ apiKey, maxresults, offset }),
+    params: buildParams({ apiKey, maxresults, greaterthanid }),
   });
 }
 
@@ -99,7 +100,7 @@ async function fetchStations(options = {}, hooks = {}) {
   const pageSize = options.pageSize ?? DEFAULT_PAGE_SIZE;
   const maxresults = options.maxresults ?? DEFAULT_MAXRESULTS;
   const all = [];
-  let offset = 0;
+  let lastId = 0;
 
   const fetchWithRetry = () =>
     retry(
@@ -109,7 +110,7 @@ async function fetchStations(options = {}, hooks = {}) {
           timeout,
           apiKey,
           maxresults: pageSize,
-          offset,
+          greaterthanid: lastId,
         });
         const { series } = normalizePagination(response);
         return series;
@@ -119,18 +120,29 @@ async function fetchStations(options = {}, hooks = {}) {
 
   do {
     const series = await fetchWithRetry();
+    const before = all.length;
     all.push(...series);
     reportProgress(50, {
       stage: 'fetching_dataset',
       fetched: all.length,
-      pageOffset: offset,
+      pageSize: series.length,
+      lastId,
     });
-    // OCM devuelve como máximo `maxresults` por request. Una página más corta
-    // que el tamaño pedido indica que no hay más datos que paginar.
-    if (series.length < pageSize || all.length >= maxresults) {
+    if (series.length > 0) {
+      // OCM no soporta offset; la paginación se hace ordenando por id
+      // ascendente y pidiendo solo ids mayores que el último recibido.
+      lastId = series[series.length - 1].ID;
+    }
+    // Una página más corta que el tamaño pedido indica que no hay más
+    // datos. lastId sin avance (respuesta vacía o duplicada) corta también.
+    const finished =
+      series.length === 0 ||
+      series.length < pageSize ||
+      all.length === before ||
+      all.length >= maxresults;
+    if (finished) {
       break;
     }
-    offset += pageSize;
   } while (true);
 
   reportProgress(60, { stage: 'normalizing_dataset', stationCount: all.length });
