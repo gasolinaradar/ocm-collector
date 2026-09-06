@@ -1,6 +1,6 @@
 {
   "name": "@gasolinaradar/ocm-collector",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Collector for OpenChargeMap (OCM) electric vehicle charging stations (Spain) returning normalized EV stations",
   "main": "src/index.js",
   "exports": {
