@@ -97,6 +97,43 @@ test('normalizePoi maps status types', () => {
   assert.equal(normalizePoi(makePoi({ StatusTypeID: 150 })).status, 'UNKNOWN');
 });
 
+test('normalizeConnectors keeps connectors that only have a ConnectionTypeID', () => {
+  const station = normalizePoi(
+    makePoi({
+      ConnectionTypes: [
+        { ConnectionTypeID: 28 },
+        { ConnectionTypeID: 27 },
+        { ConnectionTypeID: 999999 },
+      ],
+    }),
+  );
+
+  assert.equal(station.connectors.length, 3);
+  assert.deepEqual(station.connectors[0], {
+    type: 'IEC_62196_T2',
+    format: null,
+    mode: null,
+    maxPowerKw: null,
+    voltageV: null,
+    maxCurrentA: null,
+    typeKey: '28',
+  });
+  assert.equal(station.connectors[1].typeKey, '27');
+  assert.equal(station.connectors[2].type, 'UNKNOWN');
+  assert.deepEqual(station.connectorTypeKeys, ['28', '27', '999999']);
+});
+
+test('normalizeConnectors drops connector entries without a ConnectionTypeID', () => {
+  const station = normalizePoi(
+    makePoi({
+      ConnectionTypes: [{}, { ConnectionTypeID: 28, PowerKW: 22 }],
+    }),
+  );
+
+  assert.equal(station.connectors.length, 1);
+  assert.equal(station.connectors[0].typeKey, '28');
+});
+
 test('OCM_TO_OCPI_CONNECTOR maps known connector IDs', () => {
   assert.equal(OCM_TO_OCPI_CONNECTOR[28], 'IEC_62196_T2');
   assert.equal(OCM_TO_OCPI_CONNECTOR[32], 'CHADEMO');
@@ -122,6 +159,32 @@ test('fetchStations returns normalized stations', async () => {
   assert.equal(stations[0].source, 'ocm');
   assert.equal(stations[0].sourceStationId, 'ocm-200352');
   assert.equal(stations[1].sourceStationId, 'ocm-999');
+});
+
+function createPaginatedClient(count) {
+  return {
+    get: async (_url, { params = {} } = {}) => {
+      const offset = params.offset || 0;
+      const max = params.maxresults || 2000;
+      const page = [];
+      for (let i = offset; i < Math.min(count, offset + max); i += 1) {
+        page.push(makePoi({ ID: i }));
+      }
+      return { status: 200, data: page };
+    },
+  };
+}
+
+test('fetchStations pages past a single pageSize so big datasets are not truncated', async () => {
+  const stations = await fetchStations({
+    httpClient: createPaginatedClient(2500),
+    apiKey: 'test-key',
+    logger: null,
+  });
+
+  assert.equal(stations.length, 2500);
+  assert.equal(stations[0].sourceStationId, 'ocm-0');
+  assert.equal(stations[2499].sourceStationId, 'ocm-2499');
 });
 
 test('createOcmCollector exposes the collector contract', async () => {

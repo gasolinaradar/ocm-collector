@@ -1,7 +1,7 @@
 const axios = require('axios');
 
 const DEFAULT_OCM_URL = 'https://api.openchargemap.io/v3/poi';
-const DEFAULT_MAXRESULTS = 10000;
+const DEFAULT_MAXRESULTS = 100000;
 const DEFAULT_PAGE_SIZE = 2000;
 const DEFAULT_TIMEOUT = 15000;
 const DEFAULT_RETRIES = 3;
@@ -94,12 +94,11 @@ async function fetchStations(options = {}, hooks = {}) {
     typeof hooks.reportProgress === 'function' ? hooks.reportProgress : () => {};
 
   reportProgress(5, { stage: 'requesting_dataset' });
-  logger.info('Requesting OCM POI dataset', { url, maxresults: DEFAULT_MAXRESULTS });
+  logger.info('Requesting OCM POI dataset', { url, pageSize: DEFAULT_PAGE_SIZE });
 
   const pageSize = options.pageSize ?? DEFAULT_PAGE_SIZE;
-  const maxresults = DEFAULT_MAXRESULTS;
+  const maxresults = options.maxresults ?? DEFAULT_MAXRESULTS;
   const all = [];
-  let total = null;
   let offset = 0;
 
   const fetchWithRetry = () =>
@@ -109,13 +108,10 @@ async function fetchStations(options = {}, hooks = {}) {
           url,
           timeout,
           apiKey,
-          maxresults,
+          maxresults: pageSize,
           offset,
         });
-        const { series, total: seriesTotal } = normalizePagination(response);
-        if (total === null && seriesTotal !== null) {
-          total = seriesTotal;
-        }
+        const { series } = normalizePagination(response);
         return series;
       },
       { retries, logger },
@@ -127,14 +123,15 @@ async function fetchStations(options = {}, hooks = {}) {
     reportProgress(50, {
       stage: 'fetching_dataset',
       fetched: all.length,
-      total: total || 'unknown',
+      pageOffset: offset,
     });
-    offset += series.length;
-    const target = total && total !== 0 ? total : maxresults;
-    if (offset >= target) {
+    // OCM devuelve como máximo `maxresults` por request. Una página más corta
+    // que el tamaño pedido indica que no hay más datos que paginar.
+    if (series.length < pageSize || all.length >= maxresults) {
       break;
     }
-  } while (all.length < maxresults);
+    offset += pageSize;
+  } while (true);
 
   reportProgress(60, { stage: 'normalizing_dataset', stationCount: all.length });
   const { normalizePoi } = require('./normalize');

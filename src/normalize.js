@@ -40,7 +40,9 @@ function normalizeConnectors(connectionTypes) {
       maxCurrentA: Number.isFinite(Number(conn.Amps)) ? Number(conn.Amps) : null,
       typeKey: String(conn.ConnectionTypeID),
     }))
-    .filter((conn) => conn.maxPowerKw !== null || conn.voltageV !== null || conn.maxCurrentA !== null);
+    .filter(
+      (conn) => conn.typeKey !== 'undefined' && conn.typeKey !== 'null' && conn.typeKey !== '',
+    );
 }
 
 function normalizeStatus(statusTypeId) {
