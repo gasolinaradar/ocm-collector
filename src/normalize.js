@@ -1,16 +1,34 @@
+// Mapa ConnectionTypeID de OCM -> clave canónica del catálogo del API GasolinaRadar
+// (connectorCatalog.constants.js), NO el enum OCPI uppercase: el API resuelve
+// `connector.type` tal cual (keyMap vacío por defecto), así que la clave que emita la
+// librería es la que termina en `connectorTypeKeys` y la que determina label/icono en la
+// app. Tabla oficial sacada de ocm-export referencedata.json (ConnectionTypes no obsoletos).
+// IDs no incluidos (NEMA US, GB/T, Wireless, Avcon, XLR, Battery Swap...) caen a `UNKNOWN`
+// porque no tienen equivalente en el catálogo ni presencia relevante en España.
 const OCM_TO_OCPI_CONNECTOR = {
-  27: 'IEC_62196_T2', // Schuko / Type 2
-  28: 'IEC_62196_T2', // Type 2
-  30: 'IEC_62196_T2_DC', // CCS/COMBO
-  31: 'IEC_62196_T2_DC', // CCS/COMBO
-  32: 'CHADEMO', // CHAdeMO
-  33: 'CHADEMO', // CHAdeMO
-  1: 'IEC_60309_2_PIN', // CEE 3-pin
-  2: 'IEC_60309_2_PIN', // CEE 5-pin
-  23: 'TESLA', // Tesla
-  26: 'IEC_62196_T1', // J1772
-  10: 'IEC_62196_T3', // Scame (CEE)
-  24: 'GBT_20234', // GB/T
+  1: 'iec62196T1', // Type 1 (J1772)
+  2: 'chademo', // CHAdeMO
+  3: 'domesticG', // BS1363 3 Pin 13 Amp (UK Type G)
+  4: 'iec60309x2single16', // Blue Commando (2P+E), CEE monofásico
+  8: 'teslaR', // Tesla (Roadster)
+  13: 'domesticC', // Europlug (CEE 7/16)
+  16: 'iec60309x2single16', // CEE 3 Pin (monofásico)
+  17: 'iec60309x2three32', // CEE 5 Pin (trifásico)
+  23: 'domesticE', // CEE 7/5 (Type E, Francia)
+  25: 'iec62196T2', // Type 2 (Socket Only)
+  26: 'iec62196T3C', // SCAME Type 3C
+  27: 'teslaS', // NACS / Tesla Supercharger
+  28: 'domesticF', // CEE 7/4 Schuko (Type F)
+  29: 'domesticI', // Type I (AS 3112)
+  30: 'teslaS', // Tesla (Model S/X)
+  32: 'iec62196T1COMBO', // CCS (Type 1)
+  33: 'iec62196T2COMBO', // CCS (Type 2)
+  34: 'iec60309x2single16', // IEC 60309 3-pin (monofásico)
+  35: 'iec60309x2three32', // IEC 60309 5-pin (trifásico)
+  36: 'iec62196T3A', // SCAME Type 3A (Low Power)
+  1036: 'iec62196T2', // Type 2 (Tethered Connector)
+  1037: 'domesticJ', // T13 - SEC1011 (Type J, Suiza)
+  1044: 'chademo', // ChaoJi / CHAdeMO 3.x
 };
 
 const OCM_STATUS_TO_OCPI = {
@@ -105,8 +123,46 @@ function detectFlatOrTime(text) {
   return null;
 }
 
-// Parse sostenido del texto libre de OCM `UsageCost` a componentes de precio OCPI.
-// Devuelve `[]` cuando no se puede extraer un precio numérico (gratis, variado, desconocido).
+// OCM distingue tarifas por corriente de carga en el mismo texto libre de UsageCost
+// ("0,50€/kWh DC - 0,45€/kWh AC"). Se conserva como restriction del componente para que la
+// API pueda asociar el coste al conector que le corresponde (AC vs DC).
+function detectCurrentType(text) {
+  if (/\bDC\b/i.test(text)) {
+    return 'DC';
+  }
+  if (/\bAC\b/i.test(text)) {
+    return 'AC';
+  }
+  return undefined;
+}
+
+function parseUsageSegment(segment) {
+  const text = segment.trim();
+  const amount = extractAmount(text);
+  if (amount === null) {
+    return null;
+  }
+  const currency = detectCurrency(text) || 'EUR'; // OCM España mayoritariamente EUR
+
+  const energy = isEnergyUnit(text);
+  const type = energy
+    ? 'ENERGY'
+    : detectFlatOrTime(text) || (text.includes('/') ? 'FLAT' : undefined);
+
+  if (!type) {
+    // Sin unidad clara -> solo se emite si hay precio, como FLAT genérico de sesión.
+    return { type: 'FLAT', price: amount, currency };
+  }
+
+  const currentType = detectCurrentType(text);
+  const component = { type, price: amount, currency };
+  if (currentType) {
+    component.restrictions = { currentType };
+  }
+  return component;
+}
+
+// Un UsageCost puede traer varias tarifas separadas por guiones ("0,50€/kWh DC - 0,45€/kWh AC").
 function parseUsageCost(usageCost) {
   if (!usageCost || typeof usageCost !== 'string') {
     return [];
@@ -116,23 +172,24 @@ function parseUsageCost(usageCost) {
     return [];
   }
 
-  const amount = extractAmount(text);
-  if (amount === null) {
-    return [];
+  const components = [];
+  for (const segment of text.split(/\s+[-–]\s+/)) {
+    const component = parseUsageSegment(segment);
+    if (
+      component &&
+      !components.some(
+        (existing) =>
+          existing.type === component.type &&
+          existing.price === component.price &&
+          existing.currency === component.currency &&
+          JSON.stringify(existing.restrictions) === JSON.stringify(component.restrictions),
+      )
+    ) {
+      components.push(component);
+    }
   }
-  const currency = detectCurrency(text) || 'EUR'; // OCM España mayoritariamente EUR
 
-  const energy = isEnergyUnit(text);
-  const flatType = energy
-    ? 'ENERGY'
-    : detectFlatOrTime(text) || (text.includes('/') ? 'FLAT' : undefined);
-
-  if (!flatType) {
-    // Sin unidad clara -> solo se emite si hay precio, como FLAT genérico de sesión.
-    return [{ type: 'FLAT', price: amount, currency }];
-  }
-
-  return [{ type: flatType, price: amount, currency }];
+  return components;
 }
 
 function normalizeAvailability(poi) {
