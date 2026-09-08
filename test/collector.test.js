@@ -19,8 +19,8 @@ function makePoi(overrides = {}) {
     OperatorInfo: { ID: 3341, Title: 'Opcharge', WebsiteURL: 'https://opcharge.example' },
     Connections: [
       {
-        ConnectionTypeID: 28,
-        FormalName: 'Type 2',
+        ConnectionTypeID: 25,
+        FormalName: 'Type 2 (Socket Only)',
         LevelID: 2,
         Amps: 32,
         Voltage: 230,
@@ -53,13 +53,13 @@ test('normalizePoi maps a standard OCM POI to the Station contract', () => {
   });
   assert.deepEqual(station.connectors, [
     {
-      type: 'IEC_62196_T2',
+      type: 'iec62196T2',
       format: null,
       mode: null,
       maxPowerKw: 7.4,
       voltageV: 230,
       maxCurrentA: 32,
-      typeKey: '28',
+      typeKey: '25',
     },
   ]);
 });
@@ -67,17 +67,19 @@ test('normalizePoi maps a standard OCM POI to the Station contract', () => {
 test('normalizePoi handles multi-connector POIs by mapping each connection type', () => {
   const poi = makePoi({
     Connections: [
-      { ConnectionTypeID: 30, PowerKW: 50, Voltage: 400, Amps: 125 },
-      { ConnectionTypeID: 32, PowerKW: 20, Voltage: 400, Amps: 50 },
+      { ConnectionTypeID: 33, PowerKW: 50, Voltage: 400, Amps: 125 },
+      { ConnectionTypeID: 2, PowerKW: 50, Voltage: 400, Amps: 125 },
+      { ConnectionTypeID: 25, PowerKW: 22, Voltage: 230, Amps: 32 },
     ],
   });
 
   const station = normalizePoi(poi);
 
-  assert.equal(station.connectors.length, 2);
-  assert.equal(station.connectors[0].type, 'IEC_62196_T2_DC');
-  assert.equal(station.connectors[1].type, 'CHADEMO');
-  assert.deepEqual(station.connectorTypeKeys, ['30', '32']);
+  assert.equal(station.connectors.length, 3);
+  assert.equal(station.connectors[0].type, 'iec62196T2COMBO'); // CCS (Type 2)
+  assert.equal(station.connectors[1].type, 'chademo'); // CHAdeMO
+  assert.equal(station.connectors[2].type, 'iec62196T2'); // Type 2 (Socket Only)
+  assert.deepEqual(station.connectorTypeKeys, ['33', '2', '25']);
 });
 
 test('normalizePoi handles POIs with no operator', () => {
@@ -110,7 +112,7 @@ test('normalizeConnectors keeps connectors that only have a ConnectionTypeID', (
 
   assert.equal(station.connectors.length, 3);
   assert.deepEqual(station.connectors[0], {
-    type: 'IEC_62196_T2',
+    type: 'domesticF',
     format: null,
     mode: null,
     maxPowerKw: null,
@@ -135,8 +137,10 @@ test('normalizeConnectors drops connector entries without a ConnectionTypeID', (
 });
 
 test('OCM_TO_OCPI_CONNECTOR maps known connector IDs', () => {
-  assert.equal(OCM_TO_OCPI_CONNECTOR[28], 'IEC_62196_T2');
-  assert.equal(OCM_TO_OCPI_CONNECTOR[32], 'CHADEMO');
+  assert.equal(OCM_TO_OCPI_CONNECTOR[28], 'domesticF'); // CEE 7/4 Schuko
+  assert.equal(OCM_TO_OCPI_CONNECTOR[33], 'iec62196T2COMBO'); // CCS (Type 2)
+  assert.equal(OCM_TO_OCPI_CONNECTOR[2], 'chademo'); // CHAdeMO
+  assert.equal(OCM_TO_OCPI_CONNECTOR[25], 'iec62196T2'); // Type 2 (Socket Only)
 });
 
 function createFakeClient(results) {
@@ -224,6 +228,24 @@ test('parseUsageCost parses per-kWh prices to ENERGY components', () => {
   ]);
 });
 
+test('parseUsageCost splits DC and AC per-kWh prices with currentType restriction', () => {
+  assert.deepStrictEqual(parseUsageCost('0,50\u20AC/kWh DC - 0,45\u20AC/kWh AC'), [
+    { type: 'ENERGY', price: 0.5, currency: 'EUR', restrictions: { currentType: 'DC' } },
+    { type: 'ENERGY', price: 0.45, currency: 'EUR', restrictions: { currentType: 'AC' } },
+  ]);
+  assert.deepStrictEqual(parseUsageCost('0.60\u20AC/kWh DC - 0,39\u20AC/kWh AC'), [
+    { type: 'ENERGY', price: 0.6, currency: 'EUR', restrictions: { currentType: 'DC' } },
+    { type: 'ENERGY', price: 0.39, currency: 'EUR', restrictions: { currentType: 'AC' } },
+  ]);
+  assert.deepStrictEqual(parseUsageCost('0,45\u20AC/kWh DC - 0,39\u20AC/kWh AC'), [
+    { type: 'ENERGY', price: 0.45, currency: 'EUR', restrictions: { currentType: 'DC' } },
+    { type: 'ENERGY', price: 0.39, currency: 'EUR', restrictions: { currentType: 'AC' } },
+  ]);
+  assert.deepStrictEqual(parseUsageCost('0,47\u20AC/kWh '), [
+    { type: 'ENERGY', price: 0.47, currency: 'EUR' },
+  ]);
+});
+
 test('parseUsageCost parses session and per-time costs', () => {
   assert.deepStrictEqual(parseUsageCost('5\u20AC/up to 60min'), [
     { type: 'FLAT', price: 5, currency: 'EUR' },
@@ -254,4 +276,69 @@ test('normalizePoi enriches prices, availability and site type from OCM fields',
   assert.deepStrictEqual(station.prices, [{ type: 'ENERGY', price: 0.45, currency: 'EUR' }]);
   assert.deepStrictEqual(station.availability, { status: 'AVAILABLE', evseCount: 4 });
   assert.equal(station.typeOfSite, 'public');
+});
+
+test('normalizePoi reflects real OCM station with CCS+CHAdeMO+Type2 and DC/AC costs', () => {
+  // Estación real de OCM (BDMED): web muestra "Number Of Stations/Bays: 2" = NumberOfPoints,
+  // 1 x CCS (Type 2) 50kW DC, 1 x CHAdeMO 50kW DC, 1 x Type 2 (Socket Only) 22kW AC.
+  const station = normalizePoi(
+    makePoi({
+      ID: 170662,
+      AddressInfo: {
+        Title: 'E.S. BDMED Hnos Bou',
+        AddressLine1: 'Av. Lledó 5',
+        Town: 'Castellón de la Plana',
+        StateOrProvince: 'Castellón',
+        Latitude: 39.9652551,
+        Longitude: -0.0164207,
+      },
+      StatusTypeID: 50,
+      NumberOfPoints: 2,
+      Connections: [
+        {
+          ConnectionTypeID: 33,
+          FormalName: 'CCS (Type 2)',
+          LevelID: 3,
+          Amps: 125,
+          Voltage: 400,
+          PowerKW: 50,
+          CurrentTypeID: 30,
+          CurrentDescription: 'DC',
+        },
+        {
+          ConnectionTypeID: 2,
+          FormalName: 'CHAdeMO',
+          LevelID: 3,
+          Amps: 125,
+          Voltage: 400,
+          PowerKW: 50,
+          CurrentTypeID: 30,
+          CurrentDescription: 'DC',
+        },
+        {
+          ConnectionTypeID: 25,
+          FormalName: 'Type 2 (Socket Only)',
+          LevelID: 2,
+          Amps: 32,
+          Voltage: 230,
+          PowerKW: 22,
+          CurrentTypeID: 20,
+          CurrentDescription: 'AC',
+        },
+      ],
+      UsageCost: '0,50\u20AC/kWh DC - 0,45\u20AC/kWh AC',
+    }),
+  );
+
+  assert.equal(station.connectors.length, 3);
+  assert.deepEqual(
+    station.connectors.map((c) => c.type),
+    ['iec62196T2COMBO', 'chademo', 'iec62196T2'],
+  );
+  assert.deepEqual(station.connectorTypeKeys, ['33', '2', '25']);
+  assert.deepStrictEqual(station.prices, [
+    { type: 'ENERGY', price: 0.5, currency: 'EUR', restrictions: { currentType: 'DC' } },
+    { type: 'ENERGY', price: 0.45, currency: 'EUR', restrictions: { currentType: 'AC' } },
+  ]);
+  assert.deepEqual(station.availability, { status: 'AVAILABLE', evseCount: 2 });
 });
