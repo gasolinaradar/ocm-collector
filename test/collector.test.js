@@ -1,7 +1,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { createOcmCollector, fetchStations } = require('../src');
-const { normalizePoi, parseUsageCost, OCM_TO_OCPI_CONNECTOR } = require('../src/normalize');
+const {
+  normalizePoi,
+  parseUsageCost,
+  classifyUsageType,
+  OCM_TO_OCPI_CONNECTOR,
+  OCM_USAGE_TYPES,
+} = require('../src/normalize');
 
 function makePoi(overrides = {}) {
   return {
@@ -263,7 +269,7 @@ test('parseUsageCost returns empty for free, unknown or no-parseable text', () =
   assert.deepStrictEqual(parseUsageCost('Please contact station owner'), []);
 });
 
-test('normalizePoi enriches prices, availability and site type from OCM fields', () => {
+test('normalizePoi enriches prices, availability and usage restrictions from OCM fields', () => {
   const station = normalizePoi(
     makePoi({
       UsageCost: '0,45\u20AC/kWh',
@@ -275,7 +281,76 @@ test('normalizePoi enriches prices, availability and site type from OCM fields',
 
   assert.deepStrictEqual(station.prices, [{ type: 'ENERGY', price: 0.45, currency: 'EUR' }]);
   assert.deepStrictEqual(station.availability, { status: 'AVAILABLE', evseCount: 4 });
-  assert.equal(station.typeOfSite, 'public');
+  // OCM no contamina typeOfSite (sem\u00E1ntica de dgtEv en el contrato compartido).
+  assert.equal(station.typeOfSite, undefined);
+  assert.deepStrictEqual(station.usageRestrictions, {
+    access: 'public',
+    title: 'Public - Membership Required',
+    payAtLocation: false,
+    membershipRequired: true,
+    accessKeyRequired: true,
+  });
+});
+
+test('classifyUsageType maps the official OCM UsageTypes table', () => {
+  assert.equal(classifyUsageType(0).access, 'unknown');
+  assert.equal(classifyUsageType(1).access, 'public');
+  assert.equal(classifyUsageType(2).access, 'private'); // Private - Restricted Access
+  assert.equal(classifyUsageType(3).access, 'private'); // Privately Owned - Notice Required
+  assert.equal(classifyUsageType(4).access, 'public'); // Public - Membership Required
+  assert.equal(classifyUsageType(5).access, 'public'); // Public - Pay At Location
+  assert.equal(classifyUsageType(6).access, 'private'); // Private - For Staff, Visitors or Customers
+  assert.equal(classifyUsageType(7).access, 'public'); // Public - Notice Required
+
+  assert.equal(classifyUsageType(5).payAtLocation, true);
+  assert.equal(classifyUsageType(5).membershipRequired, false);
+  assert.equal(classifyUsageType(4).membershipRequired, true);
+  assert.equal(classifyUsageType(4).accessKeyRequired, true);
+  assert.equal(classifyUsageType(1).payAtLocation, false);
+
+  // T\u00EDtulos reales de OCM referencedata.
+  assert.equal(classifyUsageType(5).title, 'Public - Pay At Location');
+  assert.equal(classifyUsageType(6).title, 'Private - For Staff, Visitors or Customers');
+  assert.equal(classifyUsageType(7).title, 'Public - Notice Required');
+});
+
+test('classifyUsageType falls back to unknown for missing or unrecognised UsageTypeID', () => {
+  assert.deepStrictEqual(classifyUsageType(undefined), OCM_USAGE_TYPES[0]);
+  assert.deepStrictEqual(classifyUsageType(null), OCM_USAGE_TYPES[0]);
+  assert.deepStrictEqual(classifyUsageType(999), OCM_USAGE_TYPES[0]);
+  assert.equal(classifyUsageType(undefined).access, 'unknown');
+  // Devuelve una copia, no la referencia interna.
+  assert.notEqual(classifyUsageType(0), OCM_USAGE_TYPES[0]);
+});
+
+test('normalizePoi always emits usageRestrictions, never undefined, even without UsageTypeID', () => {
+  const station = normalizePoi(makePoi());
+  assert.notEqual(station.usageRestrictions, undefined);
+  assert.equal(station.usageRestrictions.access, 'unknown');
+  assert.equal(station.typeOfSite, undefined);
+});
+
+test('normalizePoi keeps LOGGEX-style UsageTypeID 6 private (regression)', () => {
+  // Regresi\u00F3n: la tabla vieja marcaba UsageTypeID 6 como "public"; OCM lo define
+  // como "Private - For Staff, Visitors or Customers".
+  const station = normalizePoi(makePoi({ UsageTypeID: 6 }));
+  assert.equal(station.usageRestrictions.access, 'private');
+  assert.equal(station.usageRestrictions.title, 'Private - For Staff, Visitors or Customers');
+  assert.equal(station.typeOfSite, undefined);
+});
+
+test('normalizePoi maps UsageTypeID 5 (Pay At Location) to public with payAtLocation', () => {
+  // Regresi\u00F3n: la tabla vieja marcaba UsageTypeID 5 como "private".
+  const station = normalizePoi(makePoi({ UsageTypeID: 5 }));
+  assert.equal(station.usageRestrictions.access, 'public');
+  assert.equal(station.usageRestrictions.payAtLocation, true);
+  assert.equal(station.usageRestrictions.membershipRequired, false);
+});
+
+test('normalizePoi maps notice-required usage types (3 private, 7 public)', () => {
+  assert.equal(normalizePoi(makePoi({ UsageTypeID: 3 })).usageRestrictions.access, 'private');
+  assert.equal(normalizePoi(makePoi({ UsageTypeID: 7 })).usageRestrictions.access, 'public');
+  assert.equal(normalizePoi(makePoi({ UsageTypeID: 2 })).usageRestrictions.access, 'private');
 });
 
 test('normalizePoi reflects real OCM station with CCS+CHAdeMO+Type2 and DC/AC costs', () => {

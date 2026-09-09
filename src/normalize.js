@@ -39,16 +39,87 @@ const OCM_STATUS_TO_OCPI = {
   75: 'OUTOFORDER',
 };
 
-// Uso (UsageTypeID) -> tipo de estación. La mayoría de los POIs de OCM son públicos
-// (UsageTypeID 1 'Public'). Membership y private se mantienen para señalizar accesibilidad.
-const OCM_USAGE_TO_SITE = {
-  1: 'public',
-  2: 'private',
-  3: 'private',
-  4: 'public', // Public - Membership Required: sigue siendo accesible públicamente
-  5: 'private',
-  6: 'public', // Public - Notice Required
+// UsageTypeID de OCM -> restricciones de acceso. Tabla oficial sacada de la
+// referencedata en vivo de OCM (`/v3/referencedata`, colección `UsageTypes`).
+// OJO: la tabla anterior mezclaba semántica de uso dentro de `typeOfSite`, que
+// en el contrato Station compartido tiene la semántica de dgtEv y colisionaba.
+// Ahora esto alimenta el campo propio `usageRestrictions` y NO toca `typeOfSite`.
+//
+//   ID  Title                                        access
+//   0   (Unknown)                                    unknown
+//   1   Public                                       public
+//   2   Private - Restricted Access                  private
+//   3   Privately Owned - Notice Required            private
+//   4   Public - Membership Required                 public  (membershipRequired, accessKeyRequired)
+//   5   Public - Pay At Location                     public  (payAtLocation)
+//   6   Private - For Staff, Visitors or Customers   private
+//   7   Public - Notice Required                     public
+const OCM_USAGE_TYPES = {
+  0: {
+    access: 'unknown',
+    title: '(Unknown)',
+    payAtLocation: false,
+    membershipRequired: false,
+    accessKeyRequired: false,
+  },
+  1: {
+    access: 'public',
+    title: 'Public',
+    payAtLocation: false,
+    membershipRequired: false,
+    accessKeyRequired: false,
+  },
+  2: {
+    access: 'private',
+    title: 'Private - Restricted Access',
+    payAtLocation: false,
+    membershipRequired: false,
+    accessKeyRequired: false,
+  },
+  3: {
+    access: 'private',
+    title: 'Privately Owned - Notice Required',
+    payAtLocation: false,
+    membershipRequired: false,
+    accessKeyRequired: false,
+  },
+  4: {
+    access: 'public',
+    title: 'Public - Membership Required',
+    payAtLocation: false,
+    membershipRequired: true,
+    accessKeyRequired: true,
+  },
+  5: {
+    access: 'public',
+    title: 'Public - Pay At Location',
+    payAtLocation: true,
+    membershipRequired: false,
+    accessKeyRequired: false,
+  },
+  6: {
+    access: 'private',
+    title: 'Private - For Staff, Visitors or Customers',
+    payAtLocation: false,
+    membershipRequired: false,
+    accessKeyRequired: false,
+  },
+  7: {
+    access: 'public',
+    title: 'Public - Notice Required',
+    payAtLocation: false,
+    membershipRequired: false,
+    accessKeyRequired: false,
+  },
 };
+
+// Clasifica un UsageTypeID de OCM en `usageRestrictions`. Un POI sin UsageTypeID
+// (o con uno desconocido) cae al ID 0 -> el campo SIEMPRE se emite, nunca undefined.
+function classifyUsageType(usageTypeId) {
+  const key = Number(usageTypeId);
+  const entry = Number.isInteger(key) && OCM_USAGE_TYPES[key] ? OCM_USAGE_TYPES[key] : OCM_USAGE_TYPES[0];
+  return { ...entry };
+}
 
 function normalizeConnectorType(connectionTypeId) {
   const key = Number(connectionTypeId);
@@ -230,7 +301,10 @@ function normalizePoi(poi) {
       : undefined,
     status: normalizeStatus(poi.StatusTypeID),
     services: ['ev_charging'],
-    typeOfSite: OCM_USAGE_TO_SITE[poi.UsageTypeID],
+    // OCM ya no escribe uso en `typeOfSite` (esa clave es semántica de dgtEv en el
+    // contrato Station compartido). El acceso OCM vive en `usageRestrictions`.
+    typeOfSite: undefined,
+    usageRestrictions: classifyUsageType(poi.UsageTypeID),
     lastUpdated: new Date(),
   };
 
@@ -254,6 +328,8 @@ module.exports = {
   normalizeConnectors,
   normalizeConnectorType,
   normalizeStatus,
+  classifyUsageType,
   OCM_TO_OCPI_CONNECTOR,
   OCM_STATUS_TO_OCPI,
+  OCM_USAGE_TYPES,
 };
