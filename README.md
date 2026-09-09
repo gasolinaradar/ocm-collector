@@ -8,6 +8,7 @@ A Node.js collector for **electric-vehicle charging stations in Spain** sourced 
 - Paginates past OCM's per-request result cap to collect all stations (`countrycode=ES`, `maxresults=10000`).
 - Maps OCM `ConnectionTypeID`s to OCPI connector types (`OCM_TO_OCPI_CONNECTOR`).
 - Maps OCM `StatusTypeID`s to a canonical status (`AVAILABLE` / `UNKNOWN` / `OUTOFORDER`).
+- Classifies OCM `UsageTypeID`s into a `usageRestrictions` object (`access` + `payAtLocation` / `membershipRequired` / `accessKeyRequired`) from the official OCM `UsageTypes` table.
 - Built-in retry with exponential backoff.
 - Injectable logger, HTTP client, and URL resolver.
 - Progress reporting hook for long runs.
@@ -117,7 +118,14 @@ Each normalized station matches the shared EV `Station` contract:
   operator: { name: 'Opcharge', website: 'https://opcharge.example' },
   status: 'AVAILABLE',
   services: ['ev_charging'],
-  typeOfSite: undefined,
+  typeOfSite: undefined, // never set for OCM points (that key carries dgtEv semantics)
+  usageRestrictions: {
+    access: 'unknown', // 'public' | 'private' | 'unknown'
+    title: '(Unknown)', // real OCM UsageTypes title
+    payAtLocation: false,
+    membershipRequired: false,
+    accessKeyRequired: false,
+  },
   lastUpdated: Date, // timestamp of the normalization
 }
 ```
@@ -126,6 +134,10 @@ Notes / Notas:
 
 - Coordinates are `[longitude, latitude]` (GeoJSON order).
 - `status` is derived from OCM `StatusTypeID`: `10/50 → AVAILABLE`, `20 → UNKNOWN`, `75 → OUTOFORDER`, `150 → UNKNOWN`.
+- `usageRestrictions` is derived from OCM `UsageTypeID` via the official `UsageTypes` referencedata table
+  (`1 → public`, `2/3/6 → private`, `4 → public + membershipRequired + accessKeyRequired`,
+  `5 → public + payAtLocation`, `7 → public`, `0`/missing → `unknown`). It is always present.
+- `typeOfSite` is never populated for OCM points; use `usageRestrictions.access` instead.
 - A POI without a matching connector table entry or operator is handled gracefully (connector type `UNKNOWN`, `operator: undefined`).
 
 ## Tests
