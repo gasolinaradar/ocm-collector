@@ -154,7 +154,20 @@ async function fetchStations(options = {}, hooks = {}) {
 
   reportProgress(60, { stage: 'normalizing_dataset', stationCount: all.length });
   const { normalizePoi } = require('./normalize');
-  const normalized = all.map(normalizePoi);
+  const normalized = [];
+  const skipped = [];
+  for (const raw of all) {
+    try {
+      normalized.push(normalizePoi(raw));
+    } catch (err) {
+      skipped.push(err.message);
+    }
+  }
+  if (skipped.length > 0) {
+    logger.warn(`Skipped ${skipped.length} OCM POIs with invalid data`, {
+      skipped: skipped.slice(0, 5),
+    });
+  }
   // El fetch termina al 60%; el API sube hasta 100 a medida que persiste.
   reportProgress(60, { stage: 'fetch_completed', stationCount: normalized.length });
   return normalized;
