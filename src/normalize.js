@@ -159,11 +159,16 @@ const CURRENCY_SYMBOLS = {
 // Extrae `10` de `0,45€/kWh`, `0.35 EUR per kWh`, `5€/up to 60min`, `2 €/h`.
 // Devuelve el valor numérico con `.` decimal.
 function extractAmount(text) {
-  const m = text.match(/\d+(?:[.,]\d+)?/);
+  // UsageCost es texto libre del operador: un número que NO es el precio ("2 sockets
+  // 0,45€/kWh") hace inservible el "primer número del texto". Se prioriza la cantidad
+  // pegada a la moneda y, si no hay ninguna, se cae al primer número (comportamiento
+  // anterior) para no perder los casos sin símbolo de moneda.
+  const withCurrency = text.match(/(\d+(?:[.,]\d+)?)\s*(?:€|eur|usd|\$)/i);
+  const m = withCurrency || text.match(/\d+(?:[.,]\d+)?/);
   if (!m) {
     return null;
   }
-  return Number(m[0].replace(',', '.'));
+  return Number((withCurrency ? withCurrency[1] : m[0]).replace(',', '.'));
 }
 
 // Lee el símbolo/abreviatura de moneda que precede (o rodea) a la cantidad.
@@ -234,6 +239,11 @@ function parseUsageSegment(segment) {
 }
 
 // Un UsageCost puede traer varias tarifas separadas por guiones ("0,50€/kWh DC - 0,45€/kWh AC").
+// El separador no necesita espacios alrededor (los operadores también escriben
+// "0,50€/kWh-0,45€/kWh"), pero un guion pegado a un dígito NO corta: ahí es un rango
+// ("10-60min"), no un separador de tarifas.
+const RATE_SEPARATOR = /\s*[–]\s*|(?<![0-9])[-]\s*/;
+
 function parseUsageCost(usageCost) {
   if (!usageCost || typeof usageCost !== 'string') {
     return [];
@@ -244,7 +254,7 @@ function parseUsageCost(usageCost) {
   }
 
   const components = [];
-  for (const segment of text.split(/\s+[-–]\s+/)) {
+  for (const segment of text.split(RATE_SEPARATOR)) {
     const component = parseUsageSegment(segment);
     if (
       component &&
