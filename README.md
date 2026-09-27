@@ -87,6 +87,8 @@ const stations = await ocmCollector.fetch({
 | `retries`    | `number`               | `3`                | Retry attempts before failing.                                    |
 | `logger`     | `{ info, warn }`       | `console`          | Injectable logger.                                                |
 | `httpClient` | `{ get(url, opts) }`   | `axios`            | Injectable HTTP client (useful for tests).                        |
+| `pageDelayMs` | `number`              | `250`              | Wait between pages in ms (OCM rate limit). `0` disables it.       |
+| `sleep`      | `(ms) => Promise`     | `setTimeout`       | Injectable sleep function (useful for tests).                     |
 
 ## Output schema / Esquema de salida
 

@@ -5,6 +5,22 @@ const DEFAULT_MAXRESULTS = 100000;
 const DEFAULT_PAGE_SIZE = 2000;
 const DEFAULT_TIMEOUT = 15000;
 const DEFAULT_RETRIES = 3;
+const DEFAULT_PAGE_DELAY_MS = 250;
+
+// Cabeceras fijas en todas las peticiones, misma convención que dgtEv-collector.
+const OCM_HEADERS = {
+  Accept: 'application/json',
+  'User-Agent': 'GasolinaRadarBot/1.0 (+https://gasolinaradar.example)',
+};
+
+function defaultSleep(ms) {
+  if (!ms) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function resolveSleep(sleepOption) {
+  return typeof sleepOption === 'function' ? sleepOption : defaultSleep;
+}
 
 function resolveApiKey(keyOption) {
   if (typeof keyOption === 'string' && keyOption.trim()) {
@@ -61,13 +77,13 @@ function buildParams({ apiKey, maxresults, greaterthanid }) {
 function normalizePagination(result) {
   const data = result?.data;
   if (Array.isArray(data)) {
-    return { series: data, total: data.length };
+    return { series: data };
   }
   if (Array.isArray(data?.PoiList)) {
-    return { series: data.PoiList, total: data.Count ?? data.PoiList.length };
+    return { series: data.PoiList };
   }
   if (Array.isArray(data?.Results) && Array.isArray(data?.Stations)) {
-    return { series: data.Stations, total: data.Results.Length };
+    return { series: data.Stations };
   }
   throw new Error('Unexpected OCM response payload');
 }
@@ -75,6 +91,7 @@ function normalizePagination(result) {
 async function fetchPage(httpClient, { url, timeout, apiKey, maxresults, greaterthanid }) {
   return httpClient.get(url, {
     timeout,
+    headers: OCM_HEADERS,
     params: buildParams({ apiKey, maxresults, greaterthanid }),
   });
 }
@@ -99,6 +116,8 @@ async function fetchStations(options = {}, hooks = {}) {
 
   const pageSize = options.pageSize ?? DEFAULT_PAGE_SIZE;
   const maxresults = options.maxresults ?? DEFAULT_MAXRESULTS;
+  const pageDelayMs = options.pageDelayMs ?? DEFAULT_PAGE_DELAY_MS;
+  const sleep = resolveSleep(options.sleep);
   const all = [];
   let lastId = 0;
   let pageCount = 0;
@@ -120,6 +139,11 @@ async function fetchStations(options = {}, hooks = {}) {
     );
 
   do {
+    // Espera entre páginas (nunca antes de la primera ni después de la última): la API
+    // pública de OCM tiene límite de tasa. `pageDelayMs: 0` la desactiva.
+    if (pageCount > 0 && pageDelayMs > 0) {
+      await sleep(pageDelayMs);
+    }
     const series = await fetchWithRetry();
     const before = all.length;
     all.push(...series);
@@ -138,7 +162,20 @@ async function fetchStations(options = {}, hooks = {}) {
     if (series.length > 0) {
       // OCM no soporta offset; la paginación se hace ordenando por id
       // ascendente y pidiendo solo ids mayores que el último recibido.
-      lastId = series[series.length - 1].ID;
+      const rawId = series[series.length - 1].ID;
+      if (Number.isInteger(rawId) && rawId > lastId) {
+        lastId = rawId;
+      } else {
+        // Sin cursor no hay página siguiente que pedir: `greaterthanid` se omite,
+        // el servidor devuelve la MISMA página y el bucle acumularía duplicados
+        // (miles de peticiones) hasta maxresults. Se corta aquí y se avisa.
+        logger.warn('OCM pagination stopped: page tail ID cannot advance the cursor', {
+          pageCount,
+          lastId,
+          rawId: String(rawId),
+        });
+        break;
+      }
     }
     // Una página más corta que el tamaño pedido indica que no hay más
     // datos. lastId sin avance (respuesta vacía o duplicada) corta también.

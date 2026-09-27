@@ -188,6 +188,32 @@ function createPaginatedClient(count) {
   };
 }
 
+// Igual que createPaginatedClient pero guarda el config de cada petición y cuenta
+// las llamadas, para poder asertar sobre cabeceras y sobre el ritmo del bucle.
+function createRecordingPaginatedClient(count) {
+  const configs = [];
+  return {
+    configs,
+    get: async (_url, config = {}) => {
+      configs.push(config);
+      const greaterThan = config.params?.greaterthanid || -1;
+      const max = config.params?.maxresults || 2000;
+      const page = [];
+      for (let i = greaterThan + 1; i < Math.min(count, greaterThan + 1 + max); i += 1) {
+        page.push(makePoi({ ID: i }));
+      }
+      return { status: 200, data: page };
+    },
+  };
+}
+
+function createSilentLogger(warnings = []) {
+  return {
+    info: () => {},
+    warn: (message, meta) => warnings.push({ message, meta }),
+  };
+}
+
 test('fetchStations pages past a single pageSize so big datasets are not truncated', async () => {
   const stations = await fetchStations({
     httpClient: createPaginatedClient(2500),
@@ -222,6 +248,88 @@ test('fetchStations throws on unexpected payload', async () => {
   );
 });
 
+test('fetchStations stops after one request when a full page has no ID to advance the cursor', async () => {
+  // Página LLENA (series.length === pageSize) de POIs sin ID numérico: `lastId` queda
+  // undefined, `greaterthanid` se omite y el servidor devuelve la MISMA página. Sin el
+  // corte el bucle pide la página 1 hasta maxresults (100k estaciones duplicadas).
+  // `maxresults: 6` acota el daño del caso rojo (2 peticiones) para no alargar el test.
+  const page = [
+    makePoi({ ID: undefined }),
+    makePoi({ ID: undefined }),
+    makePoi({ ID: undefined }),
+  ];
+  let requests = 0;
+  const warnings = [];
+  const stations = await fetchStations({
+    httpClient: {
+      get: async () => {
+        requests += 1;
+        return { status: 200, data: page };
+      },
+    },
+    apiKey: 'test-key',
+    pageSize: 3,
+    maxresults: 6,
+    pageDelayMs: 0,
+    logger: createSilentLogger(warnings),
+  });
+
+  assert.equal(requests, 1);
+  assert.equal(stations.length, 3);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0].message, /cursor/i);
+  assert.equal(warnings[0].meta.pageCount, 1);
+  assert.equal(String(warnings[0].meta.rawId), 'undefined');
+  assert.equal(warnings[0].meta.lastId, 0);
+});
+
+test('fetchStations sends the GasolinaRadar User-Agent and JSON Accept on every request', async () => {
+  const client = createRecordingPaginatedClient(2500);
+  const stations = await fetchStations({
+    httpClient: client,
+    apiKey: 'test-key',
+    pageDelayMs: 0,
+    logger: createSilentLogger(),
+  });
+
+  assert.equal(stations.length, 2500);
+  assert.equal(client.configs.length, 2);
+  for (const config of client.configs) {
+    assert.equal(config.headers['User-Agent'], 'GasolinaRadarBot/1.0 (+https://gasolinaradar.example)');
+    assert.equal(config.headers.Accept, 'application/json');
+  }
+});
+
+test('fetchStations waits between pages and skips the wait with pageDelayMs: 0', async () => {
+  const sleeps = [];
+  const client = createRecordingPaginatedClient(4);
+  const stations = await fetchStations({
+    httpClient: client,
+    apiKey: 'test-key',
+    pageSize: 3,
+    sleep: async (ms) => sleeps.push(ms),
+    logger: createSilentLogger(),
+  });
+
+  assert.equal(stations.length, 4);
+  assert.equal(client.configs.length, 2);
+  // Una sola espera: entre la página 1 y la 2. Nunca antes de la primera ni después
+  // de la última, y el valor por defecto es > 0 (límite de tasa de la API de OCM).
+  assert.equal(sleeps.length, 1);
+  assert.ok(sleeps[0] > 0, `expected a positive page delay, got ${sleeps[0]}`);
+
+  const noSleeps = [];
+  await fetchStations({
+    httpClient: createRecordingPaginatedClient(4),
+    apiKey: 'test-key',
+    pageSize: 3,
+    pageDelayMs: 0,
+    sleep: async (ms) => noSleeps.push(ms),
+    logger: createSilentLogger(),
+  });
+  assert.deepEqual(noSleeps, []);
+});
+
 test('parseUsageCost parses per-kWh prices to ENERGY components', () => {
   assert.deepStrictEqual(parseUsageCost('0,45\u20AC/kWh'), [
     { type: 'ENERGY', price: 0.45, currency: 'EUR' },
@@ -249,6 +357,34 @@ test('parseUsageCost splits DC and AC per-kWh prices with currentType restrictio
   ]);
   assert.deepStrictEqual(parseUsageCost('0,47\u20AC/kWh '), [
     { type: 'ENERGY', price: 0.47, currency: 'EUR' },
+  ]);
+});
+
+test('parseUsageCost splits DC and AC prices written without spaces around the dash', () => {
+  // Sin espacios alrededor del guion el texto no se parte y la tarifa AC se pierde:
+  // antes devolvía un único componente de 0,50 EUR etiquetado como AC.
+  assert.deepStrictEqual(parseUsageCost('0,50\u20AC/kWh-0,45\u20AC/kWh AC'), [
+    { type: 'ENERGY', price: 0.5, currency: 'EUR' },
+    { type: 'ENERGY', price: 0.45, currency: 'EUR', restrictions: { currentType: 'AC' } },
+  ]);
+  assert.deepStrictEqual(parseUsageCost('0,50 EUR/kWh DC-0,45 EUR/kWh AC'), [
+    { type: 'ENERGY', price: 0.5, currency: 'EUR', restrictions: { currentType: 'DC' } },
+    { type: 'ENERGY', price: 0.45, currency: 'EUR', restrictions: { currentType: 'AC' } },
+  ]);
+  // Un rango numérico pegado al guion NO es un separador de tarifas.
+  assert.deepStrictEqual(parseUsageCost('10-60min'), [
+    { type: 'FLAT', price: 10, currency: 'EUR' },
+  ]);
+});
+
+test('parseUsageCost takes the amount next to the currency, not the first number of the text', () => {
+  // UsageCost es texto libre: un prefijo que no es precio ("2 sockets") hacía que el
+  // precio real (0,45) se perdiera y se emitiera 2 EUR/kWh.
+  assert.deepStrictEqual(parseUsageCost('2 sockets 0,45\u20AC/kWh'), [
+    { type: 'ENERGY', price: 0.45, currency: 'EUR' },
+  ]);
+  assert.deepStrictEqual(parseUsageCost('2 sockets 0,45 EUR per kWh'), [
+    { type: 'ENERGY', price: 0.45, currency: 'EUR' },
   ]);
 });
 
