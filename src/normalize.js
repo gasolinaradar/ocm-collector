@@ -218,6 +218,10 @@ function parseUsageSegment(segment) {
   if (amount === null) {
     return null;
   }
+  // Un precio 0 en EV significa precio DESCONOCIDO, no gratis: se descarta el segmento.
+  if (!(amount > 0)) {
+    return null;
+  }
   const currency = detectCurrency(text) || 'EUR'; // OCM España mayoritariamente EUR
 
   const energy = isEnergyUnit(text);

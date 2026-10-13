@@ -151,3 +151,10 @@ npm test   # unit tests (mocked HTTP)
 ## License / Licencia
 
 MIT. See [LICENSE](./LICENSE). The underlying OCM data is subject to OCM's own terms and is filtered to open data via `opendata=true`.
+
+## Semántica de precios
+
+Un precio de `0` en EV significa precio **desconocido**, no gratis. `UsageCost` se parsea
+en componentes `{ type, price, currency, restrictions? }` y los segmentos con importe `0`
+(p. ej. `0€/kWh`) se descartan; el resto de segmentos de la misma tarifa se conservan.
+Los textos "gratis"/"free" tampoco generan precios.
