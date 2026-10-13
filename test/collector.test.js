@@ -556,7 +556,7 @@ test('normalizePoi reflects real OCM station with CCS+CHAdeMO+Type2 and DC/AC co
 
 test('parseUsageCost discards zero prices (0 means unknown, not free)', () => {
   assert.deepStrictEqual(parseUsageCost('0\u20AC/kWh'), []);
-  assert.deepStrictEqual(parseUsageCost('0,00 EUR/kWh'), []);
+  assert.deepStrictEqual(parseUsageCost('0€'), []);
   assert.deepStrictEqual(parseUsageCost('0,45\u20AC/kWh'), [
     { type: 'ENERGY', price: 0.45, currency: 'EUR' },
   ]);
