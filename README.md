@@ -1,4 +1,17 @@
-# @gasolinaradar/ocm-collector
+<p align="center">
+  <h1 align="center">@gasolinaradar/ocm-collector</h1>
+  <p align="center">
+    Normalized EV charging stations for Spain, straight from OpenChargeMap.<br />
+    Estaciones de carga EV de España, normalizadas desde OpenChargeMap.
+  </p>
+  <p align="center">
+    <a href="https://www.npmjs.com/package/@gasolinaradar/ocm-collector"><img alt="npm version" src="https://img.shields.io/npm/v/%40gasolinaradar%2Focm-collector" /></a>
+    <a href="./LICENSE"><img alt="license: MIT" src="https://img.shields.io/npm/l/%40gasolinaradar%2Focm-collector" /></a>
+    <img alt="node >= 18" src="https://img.shields.io/badge/node-%E2%89%A518-339933" />
+    <img alt="PRs welcome" src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" />
+    <img alt="Spain EV charging" src="https://img.shields.io/badge/Spain-EV%20Charging-e83e8c" />
+  </p>
+</p>
 
 A Node.js collector for **electric-vehicle charging stations in Spain** sourced from [OpenChargeMap](https://openchargemap.org) (OCM). It queries the OCM API v3 `/poi` endpoint, paginates the full Spain dataset, and returns a **normalized, ready-to-use** array of stations following the shared `Station` contract.
 
@@ -77,7 +90,7 @@ const stations = await ocmCollector.fetch({
 });
 ```
 
-## Options / Opciones
+## Configuration / Configuración
 
 | Option       | Type                   | Default            | Description                                                       |
 | ------------ | ---------------------- | ------------------ | ----------------------------------------------------------------- |
@@ -90,7 +103,7 @@ const stations = await ocmCollector.fetch({
 | `pageDelayMs` | `number`              | `250`              | Wait between pages in ms (OCM rate limit). `0` disables it.       |
 | `sleep`      | `(ms) => Promise`     | `setTimeout`       | Injectable sleep function (useful for tests).                     |
 
-## Output schema / Esquema de salida
+## Station contract / Contrato de estación
 
 Each normalized station matches the shared EV `Station` contract:
 
@@ -142,19 +155,23 @@ Notes / Notas:
 - `typeOfSite` is never populated for OCM points; use `usageRestrictions.access` instead.
 - A POI without a matching connector table entry or operator is handled gracefully (connector type `UNKNOWN`, `operator: undefined`).
 
-## Tests
-
-```bash
-npm test   # unit tests (mocked HTTP)
-```
-
-## License / Licencia
-
-MIT. See [LICENSE](./LICENSE). The underlying OCM data is subject to OCM's own terms and is filtered to open data via `opendata=true`.
-
-## Semántica de precios
+### Price semantics / Semántica de precios
 
 Un precio de `0` en EV significa precio **desconocido**, no gratis. `UsageCost` se parsea
 en componentes `{ type, price, currency, restrictions? }` y los segmentos con importe `0`
 (p. ej. `0€/kWh`) se descartan; el resto de segmentos de la misma tarifa se conservan.
 Los textos "gratis"/"free" tampoco generan precios.
+
+## Testing / Tests
+
+```bash
+npm test   # unit tests (mocked HTTP)
+```
+
+## Ecosystem / Ecosistema
+
+Part of the **Gasolina Radar** ingestion stack. Companion repositories and the source of this collector live at [github.com/gasolinaradar/ocm-collector](https://github.com/gasolinaradar/ocm-collector). The normalized `Station` output is designed to be consumed by downstream pipelines and shared across collectors.
+
+## License / Licencia
+
+MIT. See [LICENSE](./LICENSE). The underlying OCM data is subject to OCM's own terms and is filtered to open data via `opendata=true`.
